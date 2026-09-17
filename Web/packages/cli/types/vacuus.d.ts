@@ -84,6 +84,15 @@ interface VaCuusElement {
 	readonly classList: VaCuusClassList;
 	/** Fresh Proxy per access; camelCase maps to kebab-case; see VaCuusStyle. */
 	readonly style: VaCuusStyle;
+	/**
+	 * Scrolls every ancestor scroll container so this element is visible, DOM
+	 * defaults included: no argument means `{block: "start", inline: "nearest",
+	 * behavior: "auto"}`, and `scrollIntoView(false)` aligns with the bottom edge.
+	 * Deviation from DOM: a keyword outside the enumeration falls back to the
+	 * default instead of throwing TypeError (the never-throw contract). RmlUi's
+	 * own fifth alignment, `adaptive`, has no DOM spelling and is not exposed.
+	 */
+	scrollIntoView(options?: boolean | VaCuusScrollIntoViewOptions): void;
 	/** DOM duplicate rule; options object honored for `capture` only. Non-function listener throws TypeError. */
 	addEventListener(type: string, listener: (ev: VaCuusEvent) => void, options?: boolean | { capture?: boolean }): void;
 	removeEventListener(type: string, listener: (ev: VaCuusEvent) => void, options?: boolean | { capture?: boolean }): void;
@@ -158,6 +167,18 @@ interface VaCuusStyle {
 	setProperty(name: string, value: string): boolean;
 	removeProperty(name: string): void;
 	[property: string]: any;
+}
+
+/**
+ * scrollIntoView's options dictionary. `behavior: "auto"` defers to the
+ * context's configured scrolling (Context::SetDefaultScrollBehavior), which is
+ * smooth unless the host changed it. An argument type, not a facade object:
+ * NOT part of the conformance walk (see the header).
+ */
+interface VaCuusScrollIntoViewOptions {
+	block?: 'start' | 'center' | 'end' | 'nearest';
+	inline?: 'start' | 'center' | 'end' | 'nearest';
+	behavior?: 'auto' | 'instant' | 'smooth';
 }
 
 /** console.* — each argument stringified, joined by spaces, to LogVaCuusJS. */

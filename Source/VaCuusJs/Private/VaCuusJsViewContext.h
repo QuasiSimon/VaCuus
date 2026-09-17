@@ -402,6 +402,11 @@ private:
 	static JSValue RemoveChildThunk(JSContext* Ctx, JSValueConst This, int Argc, JSValueConst* Argv);
 	static JSValue RemoveThunk(JSContext* Ctx, JSValueConst This, int Argc, JSValueConst* Argv);
 
+	//~ Element prototype: scrolling. One thunk, because the DOM gives
+	//~ scrollIntoView a union argument (boolean or options dictionary) rather
+	//~ than a family of methods.
+	static JSValue ScrollIntoViewThunk(JSContext* Ctx, JSValueConst This, int Argc, JSValueConst* Argv);
+
 	//~ Element prototype: queries and attributes (magic-dispatched families).
 	static JSValue QueryThunk(JSContext* Ctx, JSValueConst This, int Argc, JSValueConst* Argv, int Magic);
 	static JSValue AttributeThunk(JSContext* Ctx, JSValueConst This, int Argc, JSValueConst* Argv, int Magic);

@@ -31,6 +31,7 @@
       "removeAttribute",
       "removeChild",
       "removeEventListener",
+      "scrollIntoView",
       "setAttribute",
       "style",
       "tagName"

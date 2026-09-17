@@ -23,6 +23,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVaCuusJsDomFacadeTest, "VaCuus.Js.Dom.Facade",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVaCuusJsDomCreateElementLowercaseTest, "VaCuus.Js.Dom.CreateElementLowercase",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVaCuusJsDomScrollIntoViewTest, "VaCuus.Js.Dom.ScrollIntoView",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVaCuusJsDomTwoViewIsolationTest, "VaCuus.Js.Dom.TwoViewIsolation",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVaCuusJsDomCacheHygieneTest, "VaCuus.Js.Dom.CacheHygiene",
@@ -310,6 +312,145 @@ bool FVaCuusJsDomCreateElementLowercaseTest::RunTest(const FString& Parameters)
 	TestNotEqual(TEXT("red: the SAME rule does NOT apply -- the E1 silent miss, observed"), RedWidth,
 		FString(TEXT("123px")));
 	AddInfo(FString::Printf(TEXT("red element's width resolved to '%s' (the rule's value is 123px)"), *RedWidth));
+
+	TestEqual(TEXT("no JS error anywhere in the run"), FWrappedDomHost::Inner->GetRuntime()->GetNumErrors(), uint64(0));
+	return true;
+}
+
+/**
+ * scrollIntoView over a real scroll container: the DOM defaults, the boolean
+ * overload, "nearest" leaving an already-visible element alone, an unknown
+ * keyword falling back instead of throwing, a throwing getter propagating, and
+ * a dead handle staying a no-op.
+ *
+ * The context's default scroll behavior is forced to Instant for the duration:
+ * "auto" defers to it (that IS the mapping under test), and RmlUi's own default
+ * is smooth, which would make every offset below a function of wall time.
+ */
+bool FVaCuusJsDomScrollIntoViewTest::RunTest(const FString& Parameters)
+{
+	using namespace VaCuusJsDomTest;
+
+	FDomTestRig Rig;
+	const FDomTestRig::EBoot Boot = Rig.Boot(*this);
+	if (Boot != FDomTestRig::EBoot::Ok)
+	{
+		return Boot == FDomTestRig::EBoot::Skip;
+	}
+
+	// Six 50px rows in a 100px scroll box: content 300, so the offset saturates
+	// at 200 and every expectation below is arithmetic, not a measurement.
+	// No text nodes anywhere, so no font is needed and no layout warning fires.
+	static const TCHAR* GDocument = TEXT(R"(<rml>
+<head><style>
+body { display: block; }
+#box { display: block; height: 100px; overflow-y: auto; }
+div.row { display: block; height: 50px; }
+</style></head>
+<body><div id="box"><div class="row" id="r0"/><div class="row" id="r1"/><div class="row" id="r2"/><div class="row" id="r3"/><div class="row" id="r4"/><div class="row" id="r5"/></div></body>
+</rml>)");
+
+	FDomProbeHost* Probe = nullptr;
+	const uint32 ViewId = Rig.AddViewWithDocument(Probe, TEXT("vacuus_jsdom_scroll"), GDocument);
+
+	bool bBound = false;
+	Rig.RunOnUI([&bBound, Probe, ViewId]()
+		{
+			Rml::ElementDocument* Document = Probe->GetDocument();
+			bBound = Document != nullptr;
+			if (Rml::Context* Context = Probe->GetContext())
+			{
+				Context->SetDefaultScrollBehavior(Rml::ScrollBehavior::Instant, 1.0f);
+			}
+			FWrappedDomHost::Inner->BindDocumentForTest(ViewId, Document);
+		});
+	if (!TestTrue(TEXT("the document loaded and bound"), bBound))
+	{
+		return false;
+	}
+
+	// The layout has to exist before any of this means anything: a box whose
+	// content is not taller than itself cannot scroll, and the assertions would
+	// all pass for the wrong reason.
+	float ScrollHeight = 0.0f;
+	const auto ReadScrollTop = [&Rig, Probe]() -> float
+	{
+		float Top = -1.0f;
+		Rig.RunOnUI([&Top, Probe]()
+			{
+				Rml::Element* Box = Probe->GetDocument()->GetElementById("box");
+				Top = Box != nullptr ? Box->GetScrollTop() : -1.0f;
+			});
+		return Top;
+	};
+	Rig.RunOnUI([&ScrollHeight, Probe]()
+		{
+			Rml::Element* Box = Probe->GetDocument()->GetElementById("box");
+			ScrollHeight = Box != nullptr ? Box->GetScrollHeight() : 0.0f;
+		});
+	if (!TestEqual(TEXT("the box really is a scroll container (300 of content in 100)"), ScrollHeight, 300.0f))
+	{
+		return false;
+	}
+	TestEqual(TEXT("nothing has scrolled yet"), ReadScrollTop(), 0.0f);
+
+	// The default alignment is "start", and the offset saturates: r5 starts at
+	// 250, the maximum offset is 300 - 100.
+	TestEqual(TEXT("scrollIntoView() returns undefined"),
+		Rig.Eval(ViewId, "String(document.getElementById('r5').scrollIntoView())"), FString(TEXT("undefined")));
+	TestEqual(TEXT("block defaults to start, clamped to the maximum offset"), ReadScrollTop(), 200.0f);
+
+	Rig.Eval(ViewId, "document.getElementById('r0').scrollIntoView({block: 'start'})");
+	TestEqual(TEXT("back to the top"), ReadScrollTop(), 0.0f);
+
+	// The boolean overload: false means "align with the bottom edge", so r2
+	// (100..150) ends flush with the bottom of the 100-tall box.
+	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView(false)");
+	TestEqual(TEXT("scrollIntoView(false) aligns with the bottom"), ReadScrollTop(), 50.0f);
+
+	// undefined is the no-argument call, NOT the falsy overload: r2 aligns to
+	// the top again rather than staying where the bottom alignment left it.
+	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView(undefined)");
+	TestEqual(TEXT("undefined reads as the default, not as false"), ReadScrollTop(), 100.0f);
+
+	// null is the no-argument call as well: WebIDL resolves a (dictionary or boolean) union's null to the
+	// DICTIONARY, every member absent -- which is why a browser scrolls null to "start", not to the bottom.
+	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView(false)");
+	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView(null)");
+	TestEqual(TEXT("null reads as the dictionary, not as false"), ReadScrollTop(), 100.0f);
+
+	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView(false)");
+	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView({block: 'nearest'})");
+	TestEqual(TEXT("nearest leaves an already-visible element alone"), ReadScrollTop(), 50.0f);
+
+	// The documented deviation: an unknown keyword falls back to the default
+	// where the DOM would throw a TypeError.
+	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView({block: 'bogus'})");
+	TestEqual(TEXT("an unknown keyword falls back to start"), ReadScrollTop(), 100.0f);
+
+	// A throwing getter on the options object is the SCRIPT's throw and must
+	// propagate -- and nothing may scroll before it does.
+	const FString Thrown = Rig.Eval(ViewId,
+		"document.getElementById('r5').scrollIntoView({get block() { throw new Error('nope'); }})");
+	TestTrue(TEXT("a throwing getter propagates"), Thrown.Contains(TEXT("nope")));
+	TestEqual(TEXT("and nothing scrolled on the way out"), ReadScrollTop(), 100.0f);
+
+	// A getter that destroys the element mid-call. The element is resolved twice on purpose -- once for the
+	// dead-handle check, once after the options are read -- because this is the one place where arbitrary script
+	// runs between the two, and RemoveThunk frees the element there and then rather than merely detaching it.
+	TestEqual(TEXT("an element removed by its own options getter is a no-op, not a use-after-free"),
+		Rig.Eval(ViewId,
+			"const victim = document.getElementById('r3');"
+			"String(victim.scrollIntoView({get block() { victim.remove(); return 'start'; }}))"),
+		FString(TEXT("undefined")));
+
+	// A dead handle: no-op, no throw, like every other member.
+	TestEqual(TEXT("a dead handle scrolls nothing and throws nothing"),
+		Rig.Eval(ViewId,
+			"const doomed = document.getElementById('r4');"
+			"doomed.remove();"
+			"String(doomed.scrollIntoView({block: 'start'}))"),
+		FString(TEXT("undefined")));
 
 	TestEqual(TEXT("no JS error anywhere in the run"), FWrappedDomHost::Inner->GetRuntime()->GetNumErrors(), uint64(0));
 	return true;

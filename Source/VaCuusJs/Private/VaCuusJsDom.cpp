@@ -31,6 +31,7 @@
 #include <RmlUi/Core/ElementText.h>
 #include <RmlUi/Core/Factory.h>
 #include <RmlUi/Core/Property.h>
+#include <RmlUi/Core/ScrollTypes.h>
 #include <RmlUi/Core/StringUtilities.h>
 #include <RmlUi/Core/Variant.h>
 
@@ -132,6 +133,113 @@ bool ToRmlString(JSContext* Ctx, JSValueConst Value, Rml::String& Out)
 JSValue NewRmlString(JSContext* Ctx, const Rml::String& Value)
 {
 	return JS_NewStringLen(Ctx, Value.c_str(), Value.size());
+}
+
+/** What reading one key off a scrollIntoView options object produced. */
+enum class EKeywordRead : uint8
+{
+	Absent,	   // no such key, or undefined/null: the caller's default stands
+	Read,	   // Out holds the keyword
+	Threw	   // a getter or a toString threw; the exception is pending
+};
+
+EKeywordRead ReadKeyword(JSContext* Ctx, JSValueConst Options, const char* Key, Rml::String& Out)
+{
+	JSValue Value = JS_GetPropertyStr(Ctx, Options, Key);
+	if (JS_IsException(Value))
+	{
+		return EKeywordRead::Threw;
+	}
+	if (JS_IsUndefined(Value) || JS_IsNull(Value))
+	{
+		JS_FreeValue(Ctx, Value);
+		return EKeywordRead::Absent;
+	}
+
+	const bool bCoerced = ToRmlString(Ctx, Value, Out);
+	JS_FreeValue(Ctx, Value);
+	return bCoerced ? EKeywordRead::Read : EKeywordRead::Threw;
+}
+
+/**
+ * Applies one alignment key ("block" or "inline") to Out.
+ *
+ * @return false ONLY when reading the key threw, which the caller propagates.
+ * An absent key leaves Out alone, and so does an unrecognised keyword: where
+ * the DOM raises a TypeError for a value outside the enumeration, this facade
+ * keeps its never-throw rule and falls back to the default.
+ */
+bool ApplyAlignment(JSContext* Ctx, JSValueConst Options, const char* Key, Rml::ScrollAlignment& Out)
+{
+	Rml::String Keyword;
+	switch (ReadKeyword(Ctx, Options, Key, Keyword))
+	{
+		case EKeywordRead::Threw:
+			return false;
+		case EKeywordRead::Absent:
+			return true;
+		default:
+			break;
+	}
+
+	// The DOM's four spellings. RmlUi's fifth alignment, Adaptive, is
+	// deliberately NOT reachable from script: it has no DOM name, and inventing
+	// one here would make the facade diverge from the platform it mirrors.
+	static const struct
+	{
+		const char* Name;
+		Rml::ScrollAlignment Value;
+	} GAlignments[] = {
+		{"start", Rml::ScrollAlignment::Start},
+		{"center", Rml::ScrollAlignment::Center},
+		{"end", Rml::ScrollAlignment::End},
+		{"nearest", Rml::ScrollAlignment::Nearest},
+	};
+
+	for (const auto& Alignment : GAlignments)
+	{
+		if (Keyword == Alignment.Name)
+		{
+			Out = Alignment.Value;
+			break;
+		}
+	}
+	return true;
+}
+
+/** The "behavior" key, by the same rules as ApplyAlignment. */
+bool ApplyBehavior(JSContext* Ctx, JSValueConst Options, Rml::ScrollBehavior& Out)
+{
+	Rml::String Keyword;
+	switch (ReadKeyword(Ctx, Options, "behavior", Keyword))
+	{
+		case EKeywordRead::Threw:
+			return false;
+		case EKeywordRead::Absent:
+			return true;
+		default:
+			break;
+	}
+
+	static const struct
+	{
+		const char* Name;
+		Rml::ScrollBehavior Value;
+	} GBehaviors[] = {
+		{"auto", Rml::ScrollBehavior::Auto},
+		{"instant", Rml::ScrollBehavior::Instant},
+		{"smooth", Rml::ScrollBehavior::Smooth},
+	};
+
+	for (const auto& Behavior : GBehaviors)
+	{
+		if (Keyword == Behavior.Name)
+		{
+			Out = Behavior.Value;
+			break;
+		}
+	}
+	return true;
 }
 
 /**
@@ -398,6 +506,7 @@ void FVaCuusJsViewContext::InstallDomPrototypes()
 		JS_CFUNC_MAGIC_DEF("insertBefore", 2, FVaCuusJsViewContext::InsertThunk, InsertBeforeRef),
 		JS_CFUNC_DEF("removeChild", 1, FVaCuusJsViewContext::RemoveChildThunk),
 		JS_CFUNC_DEF("remove", 0, FVaCuusJsViewContext::RemoveThunk),
+		JS_CFUNC_DEF("scrollIntoView", 0, FVaCuusJsViewContext::ScrollIntoViewThunk),
 		JS_CFUNC_MAGIC_DEF("querySelector", 1, FVaCuusJsViewContext::QueryThunk, QuerySelector),
 		JS_CFUNC_MAGIC_DEF("querySelectorAll", 1, FVaCuusJsViewContext::QueryThunk, QuerySelectorAll),
 		JS_CFUNC_MAGIC_DEF("closest", 1, FVaCuusJsViewContext::QueryThunk, Closest),
@@ -799,6 +908,76 @@ JSValue FVaCuusJsViewContext::RemoveThunk(JSContext* Ctx, JSValueConst This, int
 	// else: alive, detached, owned by C++ somewhere -- not the facade's to
 	// destroy; no-op by the same never-throw rule.
 
+	return JS_UNDEFINED;
+}
+
+// ---------------------------------------------------------------------------
+// Element prototype: scrolling
+// ---------------------------------------------------------------------------
+
+JSValue FVaCuusJsViewContext::ScrollIntoViewThunk(JSContext* Ctx, JSValueConst This, int Argc, JSValueConst* Argv)
+{
+	using namespace VaCuusJsDomInternal;
+
+	FVaCuusJsViewContext* Self = GetSelfOrNull(Ctx);
+	if (Self == nullptr)
+	{
+		return JS_UNDEFINED;	// dead context: there is no tree left to scroll
+	}
+
+	Rml::Element* Element = Self->GetLiveElement(This);
+	if (Element == nullptr)
+	{
+		return JS_UNDEFINED;	// dead handle: a no-op, like every other member
+	}
+
+	// The DOM's defaults for the no-argument call: block "start", inline
+	// "nearest", behavior "auto". RmlUi's own struct defaults the behavior to
+	// Instant instead (ScrollTypes.h:27-36); "auto" is the DOM spelling of
+	// "whatever the context is configured for", which is Rml::ScrollBehavior::Auto.
+	Rml::ScrollIntoViewOptions Options(
+		Rml::ScrollAlignment::Start, Rml::ScrollAlignment::Nearest, Rml::ScrollBehavior::Auto);
+
+	// scrollIntoView(undefined) is the no-argument call: the DOM's union argument
+	// is optional with a default of true, so undefined means "use the default",
+	// not "align to the bottom". null is the no-argument call too -- WebIDL
+	// resolves a (dictionary or boolean) union's null to the DICTIONARY, whose
+	// every member is then absent, which is why browsers scroll null to "start"
+	// rather than to the bottom.
+	if (Argc >= 1 && !JS_IsUndefined(Argv[0]) && !JS_IsNull(Argv[0]))
+	{
+		if (JS_IsObject(Argv[0]))
+		{
+			if (!ApplyAlignment(Ctx, Argv[0], "block", Options.vertical)
+				|| !ApplyAlignment(Ctx, Argv[0], "inline", Options.horizontal)
+				|| !ApplyBehavior(Ctx, Argv[0], Options.behavior))
+			{
+				// A getter (or a toString) on the options object threw. That is
+				// the SCRIPT's throw, not a facade throw, so it propagates --
+				// the same carve-out ToRmlString documents.
+				return JS_EXCEPTION;
+			}
+		}
+		else if (JS_ToBool(Ctx, Argv[0]) == 0)
+		{
+			// The boolean overload: false aligns the element with the bottom of
+			// the scroll container, true keeps the "start" default.
+			Options.vertical = Rml::ScrollAlignment::End;
+		}
+	}
+
+	// RE-RESOLVED, not reused: the options object's getters are arbitrary script and may have removed this very
+	// element (RemoveThunk destroys it there and then, it does not merely detach it). The handle's ObserverPtr
+	// notices; the raw pointer taken before they ran does not, and using it would be a write into freed memory.
+	Element = Self->GetLiveElement(This);
+	if (Element == nullptr)
+	{
+		return JS_UNDEFINED;
+	}
+
+	// ScrollParentage stays at its All default: the DOM scrolls every ancestor
+	// scroll container, not only the closest one.
+	Element->ScrollIntoView(Options);
 	return JS_UNDEFINED;
 }
 
