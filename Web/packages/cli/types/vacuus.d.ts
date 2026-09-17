@@ -91,6 +91,13 @@ interface VaCuusElement {
 	 * Deviation from DOM: a keyword outside the enumeration falls back to the
 	 * default instead of throwing TypeError (the never-throw contract). RmlUi's
 	 * own fifth alignment, `adaptive`, has no DOM spelling and is not exposed.
+	 * Deviation from DOM, and the one you will SEE: the default `behavior:
+	 * "auto"` animates here, where a browser jumps. `auto` defers to the
+	 * context's configured scroll behavior, which is smooth unless the host
+	 * calls `Context::SetDefaultScrollBehavior(Instant)`; the DOM's `auto`
+	 * instead defers to the scrolling box's `scroll-behavior`, whose initial
+	 * value is instant, and RCSS has no such property to set. Pass
+	 * `behavior: "instant"` for browser parity.
 	 */
 	scrollIntoView(options?: boolean | VaCuusScrollIntoViewOptions): void;
 	/** DOM duplicate rule; options object honored for `capture` only. Non-function listener throws TypeError. */

@@ -346,8 +346,11 @@ bool FVaCuusJsDomScrollIntoViewTest::RunTest(const FString& Parameters)
 body { display: block; }
 #box { display: block; height: 100px; overflow-y: auto; }
 div.row { display: block; height: 50px; }
+#hbox { display: block; width: 100px; height: 50px; overflow-x: auto; white-space: nowrap; }
+span.col { display: inline-block; width: 50px; height: 50px; }
 </style></head>
-<body><div id="box"><div class="row" id="r0"/><div class="row" id="r1"/><div class="row" id="r2"/><div class="row" id="r3"/><div class="row" id="r4"/><div class="row" id="r5"/></div></body>
+<body><div id="box"><div class="row" id="r0"/><div class="row" id="r1"/><div class="row" id="r2"/><div class="row" id="r3"/><div class="row" id="r4"/><div class="row" id="r5"/></div>
+<div id="hbox"><span class="col" id="c0"/><span class="col" id="c1"/><span class="col" id="c2"/><span class="col" id="c3"/><span class="col" id="c4"/><span class="col" id="c5"/></div></body>
 </rml>)");
 
 	FDomProbeHost* Probe = nullptr;
@@ -382,6 +385,16 @@ div.row { display: block; height: 50px; }
 				Top = Box != nullptr ? Box->GetScrollTop() : -1.0f;
 			});
 		return Top;
+	};
+	const auto ReadScrollLeft = [&Rig, Probe]() -> float
+	{
+		float Left = -1.0f;
+		Rig.RunOnUI([&Left, Probe]()
+			{
+				Rml::Element* Box = Probe->GetDocument()->GetElementById("hbox");
+				Left = Box != nullptr ? Box->GetScrollLeft() : -1.0f;
+			});
+		return Left;
 	};
 	Rig.RunOnUI([&ScrollHeight, Probe]()
 		{
@@ -427,6 +440,62 @@ div.row { display: block; height: 50px; }
 	// where the DOM would throw a TypeError.
 	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView({block: 'bogus'})");
 	TestEqual(TEXT("an unknown keyword falls back to start"), ReadScrollTop(), 100.0f);
+
+	// THE OTHER TWO KEYWORDS. 'center' and 'end' never appeared above, so the middle two rows of
+	// the alignment table (VaCuusJsDom.cpp:193-196) could be deleted or swapped with nothing
+	// failing. From scrollTop 100 the four keywords are all distinct on r2 (100..150 in a 100-tall
+	// box): start 100, center 75, end 50 -- and nearest 100, because from there r2 is already
+	// fully visible. That last pair is the point: the 'nearest' assertion above sits at an offset
+	// where End, Nearest and Adaptive all return the same delta (Element.cpp:53-64), so it pins
+	// nothing on its own.
+	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView({block: 'center'})");
+	TestEqual(TEXT("center puts the row in the middle of the box"), ReadScrollTop(), 75.0f);
+
+	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView({block: 'start'})");
+	TestEqual(TEXT("back to start before the nearest/end pair"), ReadScrollTop(), 100.0f);
+
+	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView({block: 'nearest'})");
+	TestEqual(TEXT("nearest does not move a row that is already fully visible"), ReadScrollTop(), 100.0f);
+
+	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView({block: 'end'})");
+	TestEqual(TEXT("end moves the same row that nearest left alone"), ReadScrollTop(), 50.0f);
+
+	Rig.Eval(ViewId, "document.getElementById('r2').scrollIntoView({block: 'start'})");
+	TestEqual(TEXT("back to start before the inline leg"), ReadScrollTop(), 100.0f);
+
+	// THE INLINE AXIS, which #box cannot observe at all: it declares only overflow-y, so
+	// scrollable_box_x is false and Element.cpp:1304 hands the horizontal component the constant
+	// 0 -- options.horizontal is never read, and the whole `inline` mapping could be deleted,
+	// misspelled or pointed at Options.vertical with every assertion above still passing. #hbox
+	// is the same fixture one axis over.
+	float HScrollWidth = 0.0f;
+	Rig.RunOnUI([&HScrollWidth, Probe]()
+		{
+			Rml::Element* Box = Probe->GetDocument()->GetElementById("hbox");
+			HScrollWidth = Box != nullptr ? Box->GetScrollWidth() : 0.0f;
+		});
+	if (!TestEqual(TEXT("the horizontal box really scrolls (300 of content in 100)"), HScrollWidth, 300.0f))
+	{
+		return false;
+	}
+	TestEqual(TEXT("nothing has scrolled horizontally yet"), ReadScrollLeft(), 0.0f);
+
+	Rig.Eval(ViewId, "document.getElementById('c5').scrollIntoView({inline: 'start'})");
+	TestEqual(TEXT("inline start scrolls the horizontal axis, clamped"), ReadScrollLeft(), 200.0f);
+
+	Rig.Eval(ViewId, "document.getElementById('c0').scrollIntoView({inline: 'start'})");
+	TestEqual(TEXT("and back to the left edge"), ReadScrollLeft(), 0.0f);
+
+	// THE AXES ARE NOT CROSSED, and it takes an ALREADY-VISIBLE column to show it. Off-screen,
+	// Start and Nearest agree -- both bring the column to the same edge -- so scrolling c5 proves
+	// only that something moved the axis, not that `inline` is what did. c1 (50..100) is fully
+	// visible from scrollLeft 0, where Nearest does not move and Start aligns it with the left
+	// edge. So this one assertion fails if "inline" is mapped to Options.vertical, if its key is
+	// misspelled, or if the line is deleted -- each of which leaves horizontal at its Nearest
+	// default (VaCuusJsDom.cpp:939) and the offset at 0.
+	Rig.Eval(ViewId, "document.getElementById('c1').scrollIntoView({inline: 'start'})");
+	TestEqual(TEXT("inline start moves a column that inline nearest would have left alone"), ReadScrollLeft(), 50.0f);
+	TestEqual(TEXT("and the vertical box is where the block leg left it"), ReadScrollTop(), 100.0f);
 
 	// A throwing getter on the options object is the SCRIPT's throw and must
 	// propagate -- and nothing may scroll before it does.

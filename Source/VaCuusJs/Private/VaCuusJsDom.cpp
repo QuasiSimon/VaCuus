@@ -933,8 +933,18 @@ JSValue FVaCuusJsViewContext::ScrollIntoViewThunk(JSContext* Ctx, JSValueConst T
 
 	// The DOM's defaults for the no-argument call: block "start", inline
 	// "nearest", behavior "auto". RmlUi's own struct defaults the behavior to
-	// Instant instead (ScrollTypes.h:27-36); "auto" is the DOM spelling of
-	// "whatever the context is configured for", which is Rml::ScrollBehavior::Auto.
+	// Instant instead (ScrollTypes.h:27-36), so "auto" has to be passed explicitly.
+	//
+	// THE TWO "auto"s ARE NOT THE SAME THING, and this is where the facade visibly
+	// parts from the platform. Rml::ScrollBehavior::Auto means "whatever the CONTEXT
+	// is configured for" -- smoothscroll_prefer_instant, false until a host calls
+	// Context::SetDefaultScrollBehavior (ScrollController.h:71, .cpp:289), and nothing
+	// in this plugin calls it. The DOM's "auto" instead defers to the scrolling box's
+	// own `scroll-behavior` property, whose initial value is instant, and RCSS has no
+	// such property. So the shipped no-argument call ANIMATES where a browser jumps.
+	// Mapping "auto" to Instant would match the browser and silently take smooth
+	// scrolling away from any host that had configured it, so the mapping stands and
+	// the difference is written down instead (vacuus.d.ts, the scrollIntoView entry).
 	Rml::ScrollIntoViewOptions Options(
 		Rml::ScrollAlignment::Start, Rml::ScrollAlignment::Nearest, Rml::ScrollBehavior::Auto);
 
