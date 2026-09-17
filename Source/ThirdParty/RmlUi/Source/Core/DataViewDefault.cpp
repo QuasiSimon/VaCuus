@@ -445,7 +445,14 @@ String DataViewText::BuildText() const
 	return result;
 }
 
-DataViewFor::DataViewFor(Element* element) : DataView(element, 0) {}
+// VaCuus patch #8 (VENDORED_TAG.txt). Upstream passes 0. The generated rows are SIBLINGS of this element
+// (InsertBefore, :551), so the views on a row element -- data-attr, data-class and the rest, bias 0 or above
+// (:22, :60, :198) -- get exactly this view's depth-based sort order (DataView.cpp:27-36), and
+// DataViews::Update breaks that tie in no defined order (DataView.cpp:104). A row view that ran before this one
+// removed its row (:559-564) read past the end of the shrunk array and logged "Could not get value from data
+// variable" (DataModel.cpp:321); one that ran after is skipped, its element gone (DataView.cpp:112). The minimum
+// bias sorts this view ahead of every non-structural view at its depth and still behind every view of its parent.
+DataViewFor::DataViewFor(Element* element) : DataView(element, -1000) {}
 
 bool DataViewFor::Initialize(DataModel& model, Element* element, const String& in_expression, const String& /*modifier*/)
 {

@@ -684,6 +684,11 @@ bound array re-evaluates every view in every row (§5).
 `data-for` adds/removes rows before the rows' own views run (`DataView.cpp:102-104`). Two view types
 use a bias: `data-value` (+100) and `data-checked` (+110), `Source/Core/DataViewDefault.cpp:15-19`.
 
+**Correction (2026-09-17, VENDORED_TAG.txt Patch #8):** that holds only for views *inside* a row.
+Rows are siblings of the template (§5.2), so a binding on the row element itself had the `data-for`
+view's own key, and upstream ran the two in an unspecified order: a shrink could evaluate a removed row
+and warn "Could not get value from data variable". The patch gives `data-for` a bias of -1000.
+
 ---
 
 ## 5. Arrays and containers

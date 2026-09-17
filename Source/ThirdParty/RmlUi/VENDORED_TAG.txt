@@ -604,3 +604,80 @@ an upstream tree that already carries it doubles the loop with nothing to flag i
 DirtyTransformState is an idempotent OR (Element.cpp:2891-2892) and both tests pass
 either way. Diff the re-vendored BuildLocalStackingContext against the hunk first, in
 case the upstream form has moved, then remove this entry (bead VaCuus-74s).
+
+
+Patch #8 -- a shrinking `data-for` evaluates the rows it is about to remove.
+
+One file, one hunk: Source/Core/DataViewDefault.cpp, DataViewFor's constructor passes a sort bias
+of -1000 instead of 0.
+
+THE DEFECT IS UPSTREAM'S, and it is live on mikke89/RmlUi master (checked 2026-09-17: DataViewFor
+still passes 0, and DataView.cpp has had only formatting and license-header commits since fb2351d,
+2021, which introduced the biases). Symptom: a shrink of an array whose `data-for` row element
+carries bindings of its own --
+
+    <div data-for="r : Replies" data-attr-reply="r.Id" data-class-is-played="r.bPlayed">
+
+-- logs "Could not get value from data variable 'Replies[2].Id'." for some or all of the removed
+rows, varying from one shrink to the next. The rows that remain render correctly. The warnings are
+the whole symptom: each one is a read past the end of the shrunk array. Found in a game's dialogue
+window, where every click on a reply shrinks the list of replies.
+
+Cause, in this tree (line numbers WITH the hunk applied):
+- DataViews::Update sorts the dirty views by GetSortOrder alone (Source/Core/DataView.cpp:104), and
+  the sort order is `bias + 1000 + 2000 * depth`, fixed when the view is constructed
+  (DataView.cpp:27-36). The comment above the sort gives the intent -- "the 'data-for' view will
+  remove children if any of its data variable array size is reduced" (:102-103) -- but the rows are
+  not its children. DataViewFor::Update inserts every row as a SIBLING, before the template element
+  (DataViewDefault.cpp:551).
+- A row's views are constructed when the row is parented: SetParent sets `parent` (Element.cpp:2181)
+  and then calls SetDataModel (:2206), which runs ApplyDataViewsControllers (:2162). By then the row
+  is already at the template's depth. A row carries the template's attributes minus `data-for`
+  (DataViewDefault.cpp:514-519), so its data-attr, data-class, data-if and so on are views on the row
+  element itself, at the depth of the data-for view. Their bias is 0 (DataViewDefault.cpp:22, through
+  :60 and :198) or higher (data-value 100 and data-checked 110, :17 and :19). The data-for view's
+  bias was 0 as well.
+- So the data-for view and the row views with bias 0 share one sort key. Every row view is dirty
+  whenever the array is, because an aliased `r.Id` reduces to the root name `Replies`
+  (DataExpression.cpp:1145-1155). std::sort keeps equal keys in no defined order, and the sort
+  before it orders the views by pointer value (DataView.cpp:98), so which one runs first depends on
+  heap addresses. A row view that runs after the data-for view finds its element already
+  destroyed (the RemoveChild(...).reset() at DataViewDefault.cpp:562) and is skipped
+  (DataView.cpp:112). A row view that runs BEFORE it evaluates `Replies[2]` against the shrunk array,
+  gets an empty variable back from DataModel::GetVariable (DataModel.cpp:285-290), and logs the
+  warning (DataModel.cpp:321).
+
+The change: DataViewFor passes the lowest bias the constructor's assert allows (DataView.cpp:29).
+Its sort order becomes `2000 * depth`. That is below every non-structural view at its own depth
+(bias >= 0, so >= 1000 + 2000 * depth) and still above every view of its parent (at most
+1999 + 2000 * (depth - 1)). Rows are now removed before any row view runs. Growth is unaffected:
+the new rows' views are new views, and they run in the next round of the same Update
+(DataView.cpp:70-87), exactly as before.
+
+Cost: none added. The dirty set is the same. The only evaluations that change are those of a
+removed row's views, which are now skipped every time instead of only when the sort placed them
+after the data-for view.
+
+WHY THIS IS NOT FIXED AT THE VaCuus LAYER: the plugin never sees the order. It is local to
+DataViews::Update, and "for" cannot be replaced with a differently biased instancer:
+Factory::RegisterDataViewInstancer refuses a name that is already registered
+(Source/Core/Factory.cpp:563-567), and "for" is registered at start-up (:247). A document can avoid
+the defect by moving the bindings onto a child of the row element, one level deeper, but that is a
+rule every document author would have to know, for a warning whose cause is not visible in the
+document.
+
+VERIFICATION (the re-vendoring check): automation test VaCuus.Core.DataFor.ShrinkOrder
+(Source/VaCuus/Private/Tests/VaCuusDataForOrderTest.cpp). It binds a counting array definition
+under a `data-for` row element with three bindings, runs a walk of grows and shrinks that removes
+2910 row views, and asserts that no shrink reads a row past the end. Its controls check that every
+row shows its own values after every step, and that the surviving rows' views were evaluated in each
+shrink's update.
+Restore-the-bug, Win64, UE 5.8.1 DebugGame host editor, -unattended -nullrhi, 2026-09-17:
+  - hunk reverted: Result={Fail} in three runs out of three, and only the six "no row view read
+    past the end of the array" assertions fail; every control passes. Per shrink, the reads past
+    the end were 18 of the 18 row views removed, 177 of 177, 768 of 768, 297 of 297, 450 of 450,
+    and 876, 1080 and 794 of 1200 in the three runs.
+  - hunk restored: Success, "2910 row views removed across the walk, 0 reads past the end, 3432
+    in range".
+
+NOT yet offered upstream -- same standing as patches #1-#6.
