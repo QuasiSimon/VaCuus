@@ -522,8 +522,8 @@ Cause, in this vendored tree:
   renders correctly without this patch -- that is not the bug, and a test that inserts
   a leaf passes with the hunk reverted (AfterLateInsert keeps one as its control). The
   insert that fails is content under a parent that has not rendered yet, which is what
-  DataViewFor::Update does to every clone: InsertBefore (DataViewDefault.cpp:544;
-  dirtied, its parent has a state) and then SetInnerRML (:548) while the clone's own
+  DataViewFor::Update does to every clone: InsertBefore (DataViewDefault.cpp:551;
+  dirtied, its parent has a state) and then SetInnerRML (:555) while the clone's own
   state is still null, so the content is parented without a dirty. The clone's first
   render then propagates over ITS `stacking_context`, which is empty because a plain
   block is not a stacking-context container -- the content lives in the CONTAINER's
@@ -610,6 +610,13 @@ Patch #8 -- a shrinking `data-for` evaluates the rows it is about to remove.
 
 One file, one hunk: Source/Core/DataViewDefault.cpp, DataViewFor's constructor passes a sort bias
 of -1000 instead of 0.
+
+THE HUNK'S COMMENT IS SEVEN LINES, so DataViewDefault.cpp line numbers from 448 on are seven
+higher in this tree than upstream's and than any citation written before this patch -- the same
+shape as patch #7's Element.cpp shift, and the reason that entry carries the same note. Patch #7
+cites this file twice; both were renumbered with this patch (:544 -> :551, :548 -> :555), in its
+entry above and in its test. Citations elsewhere in the tree were left as they stand, exactly as
+patch #7's shift left its own -- bead VaCuus-8sg carries that, for both patches at once.
 
 THE DEFECT IS UPSTREAM'S, and it is live on mikke89/RmlUi master (checked 2026-09-17: DataViewFor
 still passes 0, and DataView.cpp has had only formatting and license-header commits since fb2351d,

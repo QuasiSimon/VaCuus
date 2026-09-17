@@ -289,8 +289,8 @@ bool FVaCuusTransformAfterVisibilityChangeTest::RunTest(const FString& Parameter
 
 /**
  * THE SECOND ROUTE: content created under a parent that has not rendered yet, which is what
- * DataViewFor::Update does to every clone (InsertBefore at DataViewDefault.cpp:544, then SetInnerRML
- * at :548). Two inserts after #window's matrix has resolved:
+ * DataViewFor::Update does to every clone (InsertBefore at DataViewDefault.cpp:551, then SetInnerRML
+ * at :555). Two inserts after #window's matrix has resolved:
  *
  * - pane_direct, a leaf appended straight under #window, is the CONTROL. #window holds a
  *   transform_state, so SetParent dirties the leaf (Element.cpp:2190-2192) and it renders correctly
