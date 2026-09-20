@@ -90,6 +90,25 @@ bool BoxWithinOnePixel(const FIntRect& Actual, const FIntRect& Expected)
 }
 
 /**
+ * Outer fully contains Inner.
+ *
+ * NOT FIntRect::Contains(const FIntRect&): that overload is 5.8-only (IntRect.h:346). On
+ * UE 5.6 the only Contains is the POINT one (IntRect.h:334), so the rect argument binds to
+ * TIntPoint's implicit single-int constructor and the compile dies with "no viable
+ * conversion from 'const FIntRect' to 'IntPointType'". This is the body of 5.8's overload,
+ * copied so the assertion means the same thing on every supported engine.
+ *
+ * It lives here rather than in VaCuusEngineCompat.h on that header's own rule: it wraps the
+ * four ranked runtime hotspots and says burying them "under fifty inert pass-throughs would
+ * hide the seam's signal". This is one test file's arithmetic, not an engine seam.
+ */
+bool BoxContainsBox(const FIntRect& Outer, const FIntRect& Inner)
+{
+	return Inner.Min.X >= Outer.Min.X && Inner.Max.X <= Outer.Max.X && Inner.Min.Y >= Outer.Min.Y &&
+		Inner.Max.Y <= Outer.Max.Y;
+}
+
+/**
  * THE ONE-PANEL RIG: load a document, settle it, and measure the single glass entry's mask.
  * Two tests below differ only in their CSS, and a copy of this skeleton per case is exactly
  * where a divergence between them would hide.
@@ -331,7 +350,7 @@ bool FVaCuusGlassDistillTransformedMaskTest::RunTest(const FString& Parameters)
 			const FIntRect ActualBox = ComputeMaskBoundingBox(Entry, GViewSize);
 			TestTrue(FString::Printf(TEXT("Mask vertices land at the SCALED border box %s (got %s)"), *ExpectedBox.ToString(), *ActualBox.ToString()),
 				BoxWithinOnePixel(ActualBox, ExpectedBox));
-			TestTrue(TEXT("DrawRegion contains the scaled mask box"), Entry.DrawRegion.Contains(ActualBox));
+			TestTrue(TEXT("DrawRegion contains the scaled mask box"), BoxContainsBox(Entry.DrawRegion, ActualBox));
 
 			// NOT BAKED: the scale lives in the entry's matrix, and the geometry is still
 			// the cross-buffer map's shared untransformed copy. That is what lets the
@@ -408,7 +427,7 @@ bool FVaCuusGlassDistillRotatedMaskTest::RunTest(const FString& Parameters)
 				 *Measured.MaskBox.ToString()),
 		BoxWithinOnePixel(Measured.MaskBox, ExpectedBox));
 	TestTrue(TEXT("The rotation rides on the entry's matrix"), Measured.bTransformOnEntry);
-	TestTrue(TEXT("DrawRegion contains the rotated mask box"), Measured.DrawRegion.Contains(Measured.MaskBox));
+	TestTrue(TEXT("DrawRegion contains the rotated mask box"), BoxContainsBox(Measured.DrawRegion, Measured.MaskBox));
 
 	return true;
 }
@@ -455,7 +474,7 @@ bool FVaCuusGlassDistillSelfTransformedMaskTest::RunTest(const FString& Paramete
 				 *Measured.MaskBox.ToString()),
 		BoxWithinOnePixel(Measured.MaskBox, ExpectedBox));
 	TestTrue(TEXT("The panel's own transform rides on the entry's matrix"), Measured.bTransformOnEntry);
-	TestTrue(TEXT("DrawRegion contains the self-scaled mask box"), Measured.DrawRegion.Contains(Measured.MaskBox));
+	TestTrue(TEXT("DrawRegion contains the self-scaled mask box"), BoxContainsBox(Measured.DrawRegion, Measured.MaskBox));
 
 	return true;
 }
