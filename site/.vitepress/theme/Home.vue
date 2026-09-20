@@ -60,7 +60,7 @@ onUnmounted(() => {
              because it is the whole offer in nine words: a visitor who never scrolls still
              leaves knowing they may take this today. "Pre-release" used to lead this row and
              was wrong on both counts — VaCuus.uplugin has IsBetaVersion false and
-             VersionName 1.0.1, and the status block below already says released. -->
+             VersionName 1.0.3, and the status block below already says released. -->
         <div class="vc-hero-top vc-anim vc-anim-1">
           <span class="vc-eyebrow"
             >Unreal Engine 5.6 &ndash; 5.8 &middot; full source included</span
@@ -224,13 +224,13 @@ onUnmounted(() => {
         <div class="vc-status-hazard" aria-hidden="true" />
         <div class="vc-status-body">
           <div class="vc-status-head">
-            <strong>Status &mdash; released (1.0.1)</strong>
+            <strong>Status &mdash; released (1.0.3)</strong>
             <a class="vc-cite" href="https://github.com/ufna/VaCuus#readme">README.md</a>
           </div>
           <p>
             <strong>UE 5.6, 5.7 and 5.8</strong> are built and tested from this one
             source tree &mdash; editor and packaged-game targets, plus the
-            <strong>227-test automation suite</strong> that ships with the plugin and that
+            <strong>260-test automation suite</strong> that ships with the plugin and that
             you can run yourself. A package is stamped with the engine that built it, so
             take the download that matches yours from
             <a href="https://github.com/ufna/VaCuus/releases" target="_blank" rel="noreferrer"
@@ -446,7 +446,7 @@ onUnmounted(() => {
             <p>
               A declaration RmlUi cannot parse logs a warning naming <code>file:line</code>,
               in every configuration <strong>including Shipping</strong>. Plus a headless
-              1920&times;1080 render recipe and the 227-test suite, so an agent can check its
+              1920&times;1080 render recipe and the 260-test suite, so an agent can check its
               own work.
             </p>
           </div>
@@ -759,7 +759,7 @@ onUnmounted(() => {
     <!-- ====================================================== numbers == -->
     <section class="vc-numbers vc-rise">
       <div class="vc-num">
-        <b>227</b>
+        <b>260</b>
         <em>automation tests, shipped with the plugin</em>
         <small>Automation RunTests VaCuus</small>
       </div>

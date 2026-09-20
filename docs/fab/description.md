@@ -16,7 +16,7 @@ The short URL also appears in `VaCuus.uplugin` → `MarketplaceURL`,
 `README.md`, `docs/buyer/setup.md` and `docs/buyer/owner-handoff.md`; change it in one and
 it is wrong in the others.
 
-Drafted 2026-08-12 for bead VaCuus-jne; updated 2026-08-13 for the 1.0 release. Voice
+Drafted 2026-08-12 for bead VaCuus-jne; updated 2026-09-20 for the 1.0.3 release. Voice
 matches the shipped docs: every number below traces to `docs/buyer/perf-guide.md`, the
 README, or the descriptor — nothing is promised that a buyer cannot re-run. Assets live
 in `docs/fab/gallery/`.
@@ -53,7 +53,7 @@ the style language generated from the exact engine in the package, so the agent 
 ground truth instead of guessing from web habits. The failure mode this design answers:
 an agent cannot see the screen — so parse errors reach the Unreal log with file and line
 in every configuration including Shipping, screens render headless at 1920×1080 for
-pixel checks, and the 227-test automation suite ships in the package, source and
+pixel checks, and the 260-test automation suite ships in the package, source and
 fixtures included. Onboarding is one line in your project's own CLAUDE.md / AGENTS.md.
 
 **Engine-native data.** Data models bind straight from your `UPROPERTY` fields — no
@@ -77,7 +77,7 @@ the generated support matrix in the docs is its exact boundary. The full source 
 the package; a Fab install arrives with Epic-built binaries in your engine, so
 Blueprint-only projects work out of the box.
 
-**Status — 1.0, released.** UE 5.6, 5.7 and 5.8, built and packaged from one source
+**Status — 1.0.3, released.** UE 5.6, 5.7 and 5.8, built and packaged from one source
 tree. Every shipping platform is supported: Windows, macOS, Linux, Android and iOS all
 build, cook and render, and mobile input is wired — touch-drag scrolling with native
 inertia and the platform on-screen keyboard for text fields (verified by hand on an
@@ -103,7 +103,7 @@ https://github.com/ufna/VaCuus/issues
 - Optional JavaScript (vendored QuickJS-ng) and a TypeScript/Preact workflow
 - Ships for AI-agent workflows: `AGENTS.md` at package root, agent guide, generated RCSS
   support matrix, log-first diagnostics, headless render recipe
-- 227-test automation suite ships in the package (source and fixtures, on purpose)
+- 260-test automation suite ships in the package (source and fixtures, on purpose)
 - Localization support incl. live language switch; IME on desktop platforms
 - Cross-platform from one source tree: Windows, macOS, Linux, Android and iOS
   supported; consoles on request
@@ -139,12 +139,14 @@ MIT licenses beside them: RmlUi 6.x and QuickJS-ng. Full source included.
 
 1. **Engine versions — decided 2026-08-13: the listing claims 5.6, 5.7 and 5.8.**
    Runtime is tested on all three from one source tree (owner runs, 2026-08).
-   **Pre-publish gate:** bead VaCuus-93v is still open — `BuildPlugin`, the packaging
-   step, has only ever run on 5.8, so the 5.6 and 5.7 *packages* are not yet proven
-   end-to-end. Run those two legs (procedure: `docs/passport/2026-08-vacuus-shim1.md`)
-   and close 93v before the page goes live; the copy above is written for the state
-   after that run.
-2. **Release presentation — decided 2026-08-13: 1.0, not beta.** `VersionName "1.0"`
+   **Still open, and shipped around twice:** bead VaCuus-93v. `BuildPlugin`, the
+   packaging step, has run on 5.8 (Linux + Win64) and on 5.6 (Linux, 2026-08-10).
+   It has never run on a 5.7 SDK, because there is none on the packaging host, so
+   the 5.7 archive is the 5.6 package with its `EngineVersion` re-stamped — a
+   shipping decision, not a verification, and the archive's own
+   `PACKAGE-MANIFEST.txt` says so. The page went live 2026-08-31 with 93v open;
+   1.0.3 ships the same way.
+2. **Release presentation — decided 2026-08-13: 1.0, not beta.** `VersionName "1.0.3"`
    and `IsBetaVersion: false` in `VaCuus.uplugin`, so the buyer's plugin browser shows
    no pre-release warning, and the status paragraph says the API is stable. Known
    limitations stay documented by name rather than implied by a beta flag (bead

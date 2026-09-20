@@ -10,9 +10,9 @@ Optional JavaScript (QuickJS) and a TypeScript/Preact workflow sit on top. Rende
 through the engine's RHI into a persistent render target that Slate composites, so a
 document can be a full-screen HUD or a panel on a quad in the world.
 
-> **Status: released, 1.0. Engines: UE 5.6, 5.7 and 5.8.** All three are built and
+> **Status: released, 1.0.3. Engines: UE 5.6, 5.7 and 5.8.** All three are built and
 > tested from this one source tree — editor and packaged-game targets, plus the
-> 227-test automation suite that ships with the plugin and that you can run yourself
+> 260-test automation suite that ships with the plugin and that you can run yourself
 > (below). Every shipping platform is supported: Windows, macOS, Linux, Android and
 > iOS; consoles on request. Packages are published on
 > [GitHub Releases](https://github.com/ufna/VaCuus/releases), one archive per engine
@@ -92,7 +92,7 @@ Source/VaCuusRender/        Record -> RHI replay -> Slate composite, UMG widget 
 Source/VaCuusJs/            The JavaScript host and the DOM facade (Runtime, Default)
 Source/VaCuusEditor/        Live reload and the bundle factory (Editor, PostEngineInit)
 Web/                        Optional TypeScript/Preact workflow, source-only (npm-install it yourself)
-docs/buyer/                 The four pages above
+docs/buyer/                 The five pages above, plus localization.md
 ```
 
 There is no `Binaries/` directory in the package and that is Fab's rule for sellers of
