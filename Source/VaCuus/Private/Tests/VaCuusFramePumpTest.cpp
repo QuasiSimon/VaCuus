@@ -63,11 +63,11 @@ struct FFixture
 	FFixture& operator=(const FFixture&) = delete;
 
 	/** Marks one field dirty. Returns false if the write did not reach the model at all. */
-	bool Write(int32 Score)
+	bool Write(int32 Ammo)
 	{
-		FVaCuusLayoutTestModel Data;
-		Data.Score = Score;
-		View->UpdateModel(FName(GModelName), FVaCuusLayoutTestModel::StaticStruct(), &Data);
+		FVaCuusSamplerDefaultsModel Data;
+		Data.Ammo = Ammo;
+		View->UpdateModel(FName(GModelName), FVaCuusSamplerDefaultsModel::StaticStruct(), &Data);
 		return View->NumOutstandingModelFields(FName(GModelName)) > 0;
 	}
 
@@ -127,7 +127,7 @@ bool FVaCuusFramePumpTest::RunTest(const FString& Parameters)
 	};
 
 	// BindModel takes the name as a string (it reaches RmlUi), the rest of the API as an FName.
-	if (!TestTrue(TEXT("model bound"), Fixture.View->BindModel(FString(GModelName), FVaCuusLayoutTestModel::StaticStruct())))
+	if (!TestTrue(TEXT("model bound"), Fixture.View->BindModel(FString(GModelName), FVaCuusSamplerDefaultsModel::StaticStruct())))
 	{
 		return false;
 	}
@@ -154,11 +154,11 @@ bool FVaCuusFramePumpTest::RunTest(const FString& Parameters)
 	// Every step below runs UI frames after the game-thread call, because a field stops being outstanding when
 	// the UI thread acknowledges it, not when it is handed over. That makes the negative cases stronger too: a
 	// field still outstanding AFTER the frames ran was never published, rather than merely still in flight.
-	int32 Score = 0;
+	int32 Ammo = 0;
 	const auto WriteTickAndSettle = [&](bool bPump) -> bool
 	{
-		++Score;
-		if (!Fixture.Write(Score))
+		++Ammo;
+		if (!Fixture.Write(Ammo))
 		{
 			return false;
 		}
@@ -286,7 +286,7 @@ bool FVaCuusFramePumpTest::RunTest(const FString& Parameters)
 	};
 
 	if (!TestTrue(TEXT("second model bound"),
-			SecondView->BindModel(FString(GModelName), FVaCuusLayoutTestModel::StaticStruct())))
+			SecondView->BindModel(FString(GModelName), FVaCuusSamplerDefaultsModel::StaticStruct())))
 	{
 		return false;
 	}
@@ -297,12 +297,12 @@ bool FVaCuusFramePumpTest::RunTest(const FString& Parameters)
 		return false;
 	}
 
-	++Score;
-	FVaCuusLayoutTestModel SecondData;
-	SecondData.Score = Score;
-	SecondView->UpdateModel(FName(GModelName), FVaCuusLayoutTestModel::StaticStruct(), &SecondData);
+	++Ammo;
+	FVaCuusSamplerDefaultsModel SecondData;
+	SecondData.Ammo = Ammo;
+	SecondView->UpdateModel(FName(GModelName), FVaCuusSamplerDefaultsModel::StaticStruct(), &SecondData);
 
-	if (!TestTrue(TEXT("the owning view has something to publish"), Fixture.Write(Score)))
+	if (!TestTrue(TEXT("the owning view has something to publish"), Fixture.Write(Ammo)))
 	{
 		return false;
 	}

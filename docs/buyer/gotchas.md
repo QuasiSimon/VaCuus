@@ -407,7 +407,7 @@ The game viewport is no substitute: at the session's first load neither
 Queued commands wake the UI thread by themselves (`Source/VaCuus/Private/VaCuusUIThread.cpp:924-925`),
 so the document is laid out and drawn during the load. What stays still is everything the game
 drives: the per-frame pulse is `UVaCuusSubsystem::Tick` → `PublishAndPulse`
-(`Source/VaCuus/Private/VaCuusSubsystem.cpp:264`), which does not run inside `LoadMap`, so model
+(`Source/VaCuus/Private/VaCuusSubsystem.cpp:262`), which does not run inside `LoadMap`, so model
 updates — and a spinner fed from one — resume only when the load returns. An RCSS animation
 needs that pulse too.
 Do not: drive the view from anything else Slate runs on that thread. **Your own widgets tick

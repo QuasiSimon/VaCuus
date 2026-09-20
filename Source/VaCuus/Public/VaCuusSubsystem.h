@@ -78,7 +78,10 @@ public:
 	//~ End USubsystem
 
 	//~ Begin FTickableGameObject
-	/** Polls view status, then wakes the UI thread for exactly one frame. Never blocks. */
+	/**
+	 * Polls view status, drains the write router, then publishes model writes and wakes the UI thread for
+	 * exactly one frame -- unless a TakeFramePump() owner holds that last step (see below). Never blocks.
+	 */
 	virtual void Tick(float DeltaTime) override;
 	virtual TStatId GetStatId() const override;
 	virtual ETickableTickType GetTickableTickType() const override;
