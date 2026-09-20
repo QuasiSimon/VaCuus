@@ -406,8 +406,8 @@ The game viewport is no substitute: at the session's first load neither
 `UGameViewportClient::GetViewportSize` nor `UGameViewportClient::GetWindow()` gave a size there.
 Queued commands wake the UI thread by themselves (`Source/VaCuus/Private/VaCuusUIThread.cpp:924-925`),
 so the document is laid out and drawn during the load. What stays still is everything the game
-drives: the per-frame pulse is `UVaCuusSubsystem::Tick`
-(`Source/VaCuus/Private/VaCuusSubsystem.cpp:196`), which does not run inside `LoadMap`, so model
+drives: the per-frame pulse is `UVaCuusSubsystem::Tick` → `PublishAndPulse`
+(`Source/VaCuus/Private/VaCuusSubsystem.cpp:264`), which does not run inside `LoadMap`, so model
 updates — and a spinner fed from one — resume only when the load returns. An RCSS animation
 needs that pulse too.
 Do not: drive the view from anything else Slate runs on that thread. **Your own widgets tick
@@ -425,6 +425,60 @@ is left is a second producer on a single-producer command queue
 (`Source/VaCuus/Private/VaCuusUIQueues.h:328-330`): a corrupted queue with no assertion and —
 unlike #14 — no log line standing in for it. The configuration that ships is the one that says
 nothing. (Engine line numbers are 5.8.)
+
+**26. A UI element pinned to a world object trails that object by one frame — invisible at 60 fps,
+half a screen at 15.**
+Symptom: a marker over a vehicle, a nameplate over a character, a minimap arrow — anything whose
+screen position the host projects through the camera — sits behind where it belongs while the camera
+pans, and snaps into place the moment the camera stops. It reads as jitter rather than as a fixed
+offset, because the size of the error IS the frame time: nobody sees it at 60 fps and it is half the
+screen at 15. Turning frame generation off appears to help and fixes nothing — that only changes the
+frame time. Nothing is logged, and the host's own projection math is correct.
+Cause: `UVaCuusSubsystem` is an `FTickableGameObject`, so its `Tick()` runs from
+`FTickableGameObject::TickObjects` (`LevelTick.cpp:1821`) — BEFORE this frame's camera update
+(`PlayerController->UpdateCameraManager`, `:1847`) and before
+`FWorldDelegates::OnWorldTickEnd.Broadcast` (`:2061`). A host can only project against a final
+camera after `:1847`, so its model writes land after this subsystem has already published and pulsed
+for the frame. `UpdateModel()` only marks fields dirty
+(`Source/VaCuus/Private/VaCuusView.cpp:464`); publishing is a separate step (`:652`). The write
+therefore rides the NEXT frame's pulse — every frame, indefinitely.
+Do: take the publish over. `TakeFramePump()` when your UI layer comes up, `PumpUIFrame()` once per
+frame once this frame's models are written, `ReleaseFramePump()` when the layer goes away:
+
+```cpp
+// once, when the layer is created
+VaCuusSubsystem->TakeFramePump();
+
+// every frame, from FWorldDelegates::OnWorldTickEnd -- after the panels have projected
+for (TUniquePtr<IHudPanel>& Panel : Panels)
+{
+    Panel->Tick(Frame, *View);   // the UpdateModel() calls happen in here
+}
+VaCuusSubsystem->PumpUIFrame();
+
+// once, when the layer is removed
+VaCuusSubsystem->ReleaseFramePump();
+```
+
+Ownership is ref-counted, so split screen — two local players, one game-instance subsystem — works:
+the tick resumes publishing only when the LAST owner releases, and one player's pump publishes every
+view, the other player's included. While the pump is owned, `Tick()` still polls view status and
+drains the write router; only the publish and the pulse move.
+If several of your systems write models at the end of the frame, have each of them pump at the end of
+its own work rather than electing one — publishing is free when nothing is outstanding and the wake
+coalesces. Do NOT rely on the order of your `OnWorldTickEnd` listeners to make one pump serve all of
+them: that delegate broadcasts in reverse registration order and compacts with `RemoveAtSwap`, so the
+order changes when an unrelated system subscribes. The exception is a platform with no worker thread,
+where the UI frame runs inline inside `PumpUIFrame()` and N pumps are N frames — there, pump once.
+Do not: gate `PumpUIFrame()` on the same condition that gates your panel logic. This subsystem ticks
+while the game is paused on purpose (`Source/VaCuus/Public/VaCuusSubsystem.h:87`), so a pump skipped
+on paused frames freezes the UI for the whole pause — including the pause menu that is meant to be on
+screen. Tick your panels under whatever gate they need; pump unconditionally.
+And know what the failure looks like, because the hand-over does NOT time out: an owner that stops
+pumping without releasing stops the UI for everyone and gets one `LogVaCuus` warning naming the frame
+it stopped on, then silence. The tick deliberately does not take the publish back — doing so would
+quietly restore the one-frame staleness above, and that is invisible at 60 fps where a frozen UI is
+not. (Engine line numbers are 5.8.)
 
 ## Data binding and JS
 

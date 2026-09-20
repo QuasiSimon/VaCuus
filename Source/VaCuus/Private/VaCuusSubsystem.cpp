@@ -144,23 +144,14 @@ void UVaCuusSubsystem::Tick(float DeltaTime)
 	// the amount nobody thought to measure.
 	VACUUS_PERF_SCOPE(GameTick);
 
-	// Turns any load result the UI thread published into a game-thread broadcast, and hands
-	// the UI thread whatever this frame's UpdateModel() calls marked.
+	// Turns any load result the UI thread published into a game-thread broadcast. Polling is NOT part of the
+	// frame-pump hand-over below and runs every tick whether or not a game owns the publish: a load result the
+	// game never hears about is a load result that never happened.
 	for (TObjectPtr<UVaCuusView>& View : Views)
 	{
 		if (UVaCuusView* ViewPtr = View.Get())
 		{
 			ViewPtr->PollStatus();
-
-			// THE PUBLISH HALF OF THE M3a DATA PIPELINE, HERE AND NOT IN UpdateModel(). Two
-			// reasons, and the first is not about measurement: several UpdateModel calls in one
-			// frame -- one per actor, one per subsystem -- become ONE triple-buffer swap
-			// carrying each field's latest value, rather than one swap per call. The second is
-			// spec 6's: this is inside the GameTick scope above, which is where the game-thread
-			// budget is measured. It costs nothing when nothing changed (no outstanding field
-			// means no swap, no generation bump and therefore no UI-thread work at all), which
-			// is what spec 9's "idle -> 0 published frames" row rests on.
-			ViewPtr->PublishModelUpdates();
 		}
 	}
 
@@ -176,6 +167,81 @@ void UVaCuusSubsystem::Tick(float DeltaTime)
 	// the (empty-check) branch for everyone.
 	FVaCuusStyleRegistry::TickDeferredReleases_GameThread();
 	FVaCuusTextureRegistry::TickDeferredReleases_GameThread();
+
+	// THE HAND-OVER. A game that writes its models later in the frame -- world-anchored panels must: they need
+	// the camera, which LevelTick.cpp updates at :1847, after this tick -- owns the publish and the pulse, and
+	// performs both from PumpUIFrame(). While it does, this tick performs neither.
+	if (FramePumpOwners == 0)
+	{
+		PublishAndPulse();
+		return;
+	}
+
+	// An owned pump that stops being pumped is a UI that simply stops updating, with nothing in the log to say
+	// why -- the one failure this hand-over introduces, so it gets named rather than papered over: publishing
+	// from here instead would silently restore the one-frame staleness the pump exists to remove, which is a
+	// defect nobody sees at 60 fps. One pump may be missed without a word, because an owner pumping from
+	// OnWorldTickEnd legitimately pumps AFTER this tick, so at the tick following a pump LastPumpFrame is always
+	// one frame behind. Reported once per stall: a frozen UI would otherwise produce a line every frame.
+	if (GFrameCounter > LastPumpFrame + 1 && !bPumpStallReported)
+	{
+		bPumpStallReported = true;
+		UE_LOG(LogVaCuus, Warning,
+			TEXT("Frame pump is owned (%d owner(s)) but PumpUIFrame() has not been called since frame %llu -- the UI ")
+			TEXT("will not update until it is pumped or the pump is released"),
+			FramePumpOwners, LastPumpFrame);
+	}
+}
+
+void UVaCuusSubsystem::TakeFramePump()
+{
+	check(IsInGameThread());
+
+	++FramePumpOwners;
+
+	// Not "this frame": an owner that takes the pump after this frame's tick has already published owes its first
+	// pump only from the next frame on, and starting the stall clock at zero would accuse it immediately.
+	LastPumpFrame = GFrameCounter;
+	bPumpStallReported = false;
+}
+
+void UVaCuusSubsystem::ReleaseFramePump()
+{
+	check(IsInGameThread());
+
+	// Clamped rather than checked: an unbalanced release means the caller's teardown ran twice, which must not
+	// take the count negative and leave the tick permanently convinced someone else is publishing.
+	FramePumpOwners = FMath::Max(0, FramePumpOwners - 1);
+}
+
+void UVaCuusSubsystem::PumpUIFrame()
+{
+	check(IsInGameThread());
+
+	LastPumpFrame = GFrameCounter;
+	bPumpStallReported = false;
+	PublishAndPulse();
+}
+
+void UVaCuusSubsystem::PublishAndPulse()
+{
+	// THE PUBLISH HALF OF THE M3a DATA PIPELINE, HERE AND NOT IN UpdateModel(). Two reasons, and the first is
+	// not about measurement: several UpdateModel calls in one frame -- one per actor, one per subsystem --
+	// become ONE triple-buffer swap carrying each field's latest value, rather than one swap per call. The
+	// second is spec 6's: called from Tick() this runs inside the GameTick scope, which is where the
+	// game-thread budget is measured. It costs nothing when nothing changed (no outstanding field means no
+	// swap, no generation bump and therefore no UI-thread work at all), which is what spec 9's
+	// "idle -> 0 published frames" row rests on -- and which is also what makes a redundant pump free.
+	//
+	// From Tick() this now runs after FVaCuusWriteRouter::DrainGameThread() rather than before it, so a model
+	// the game writes from an OnModelWrite handler reaches the UI in the same frame instead of the next one.
+	for (TObjectPtr<UVaCuusView>& View : Views)
+	{
+		if (UVaCuusView* ViewPtr = View.Get())
+		{
+			ViewPtr->PublishModelUpdates();
+		}
+	}
 
 	FVaCuusUIThread* UIThread = GetUIThread();
 	if (!UIThread)

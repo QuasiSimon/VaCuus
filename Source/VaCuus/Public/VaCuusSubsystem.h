@@ -90,6 +90,40 @@ public:
 	//~ End FTickableGameObject
 
 	/**
+	 * Takes ownership of the per-frame publish: Tick() stops publishing model writes and pulsing the UI thread,
+	 * and the owner must call PumpUIFrame() once per frame instead. Ref-counted, so several owners (one per local
+	 * player) can hold it; the tick resumes when the last one releases.
+	 *
+	 * WHY A GAME WOULD WANT THIS. Tick() runs from FTickableGameObject::TickObjects (Engine LevelTick.cpp:1821),
+	 * which is BEFORE the camera is updated for the frame (:1847) and before FWorldDelegates::OnWorldTickEnd
+	 * (:2061). Anything a game projects from the camera -- a marker pinned to a world object, a nameplate -- can
+	 * therefore only be written AFTER this subsystem has already published and pulsed, and UpdateModel() only
+	 * marks fields dirty. Such a UI is published one frame late every frame, which on screen is the element
+	 * trailing the object it is pinned to: invisible at 60 fps, half a screen at 15.
+	 *
+	 * The hand-over does NOT time out. An owner that stops calling PumpUIFrame() without releasing stops the UI
+	 * for everyone, and gets one LogVaCuus warning naming the frame it stopped on; the tick does not quietly
+	 * take the publish back, because doing so would restore exactly the one-frame staleness this exists to
+	 * remove -- and that defect is invisible at 60 fps, whereas a frozen UI is not.
+	 */
+	void TakeFramePump();
+
+	/** Releases a TakeFramePump(). The subsystem's own Tick() publishes again once the last owner has released. */
+	void ReleaseFramePump();
+
+	/**
+	 * Publishes every view's pending model writes and wakes the UI thread for one frame -- the exact work Tick()
+	 * ends with, called from wherever the game has finished writing this frame's models. Only meaningful while
+	 * the caller holds TakeFramePump(); without it the tick publishes too and this merely pulses earlier.
+	 *
+	 * Cheap to call more than once per frame, which is what lets several writers each pump at the end of their
+	 * own work rather than agreeing on an order: publishing is free when nothing is outstanding, and the wake
+	 * coalesces into one UI frame. The exception is a platform with no worker thread, where the UI frame runs
+	 * inline in this call (FVaCuusUIThread::IsInlineMode) and N pumps are N frames -- there, pump once.
+	 */
+	void PumpUIFrame();
+
+	/**
 	 * Creates a view: allocates a process-unique id, hands the document host over to
 	 * the UI thread (starting it if this is the first view in the process) and
 	 * returns the handle to talk to it with.
@@ -411,9 +445,22 @@ private:
 	 */
 	int32 ReloadAllDocuments();
 
+	/** Publishes every view's pending writes, then wakes the UI thread for one frame. */
+	void PublishAndPulse();
+
 	/** Views created by this game instance; dropped in Deinitialize(). */
 	UPROPERTY(Transient)
 	TArray<TObjectPtr<UVaCuusView>> Views;
+
+	// How many callers hold TakeFramePump(). Non-zero means Tick() publishes nothing and pulses nothing, because
+	// the owner does it later in the frame. Ref-counted rather than a bool so one local player releasing does not
+	// silently stop publishing for another that still owns the pump.
+	int32 FramePumpOwners = 0;
+
+	// Engine frame of the last PumpUIFrame(), and whether the owner has already been told it stopped pumping. An
+	// owned pump that goes quiet shows up as a frozen UI with no error at all, so it is worth exactly one warning.
+	uint64 LastPumpFrame = 0;
+	bool bPumpStallReported = false;
 
 	/** Set in Initialize(); gates ticking exactly like UTickableWorldSubsystem's own flag. */
 	bool bInitialized = false;
