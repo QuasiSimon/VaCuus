@@ -25,6 +25,8 @@ IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVaCuusJsDomCreateElementLowercaseTest, "VaCuus
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVaCuusJsDomScrollIntoViewTest, "VaCuus.Js.Dom.ScrollIntoView",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
+IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVaCuusJsDomScrollOffsetTest, "VaCuus.Js.Dom.ScrollOffset",
+	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVaCuusJsDomTwoViewIsolationTest, "VaCuus.Js.Dom.TwoViewIsolation",
 	EAutomationTestFlags::EditorContext | EAutomationTestFlags::EngineFilter)
 IMPLEMENT_SIMPLE_AUTOMATION_TEST(FVaCuusJsDomReceiverDestroyedTest, "VaCuus.Js.Dom.ReceiverDestroyedMidCall",
@@ -522,6 +524,183 @@ span.col { display: inline-block; width: 50px; height: 50px; }
 			"doomed.remove();"
 			"String(doomed.scrollIntoView({block: 'start'}))"),
 		FString(TEXT("undefined")));
+
+	TestEqual(TEXT("no JS error anywhere in the run"), FWrappedDomHost::Inner->GetRuntime()->GetNumErrors(), uint64(0));
+	return true;
+}
+
+/**
+ * scrollTop and scrollLeft over the ScrollIntoView fixture: reads, writes, RmlUi's round and
+ * clamp, the CSSOM's non-finite normalisation, the synchronous `scroll` dispatch, a throwing
+ * valueOf propagating, and dead handles. Every write is also read back on the C++ side, so an
+ * assertion cannot pass by the getter agreeing with a setter that never reached the element.
+ */
+bool FVaCuusJsDomScrollOffsetTest::RunTest(const FString& Parameters)
+{
+	using namespace VaCuusJsDomTest;
+
+	FDomTestRig Rig;
+	const FDomTestRig::EBoot Boot = Rig.Boot(*this);
+	if (Boot != FDomTestRig::EBoot::Ok)
+	{
+		return Boot == FDomTestRig::EBoot::Skip;
+	}
+
+	// Six 50px rows in a 100px box, and the same one axis over: content 300 in 100, so both
+	// offsets saturate at 200. #flat has no overflow at all. No text nodes, so no font is needed.
+	static const TCHAR* GDocument = TEXT(R"(<rml>
+<head><style>
+body { display: block; }
+#box { display: block; height: 100px; overflow-y: auto; }
+div.row { display: block; height: 50px; }
+#hbox { display: block; width: 100px; height: 50px; overflow-x: auto; white-space: nowrap; }
+span.col { display: inline-block; width: 50px; height: 50px; }
+#flat { display: block; height: 50px; }
+</style></head>
+<body><div id="box"><div class="row"/><div class="row"/><div class="row"/><div class="row"/><div class="row"/><div class="row"/></div>
+<div id="hbox"><span class="col"/><span class="col"/><span class="col"/><span class="col"/><span class="col"/><span class="col"/></div>
+<div id="flat"><div class="row"/></div></body>
+</rml>)");
+
+	FDomProbeHost* Probe = nullptr;
+	const uint32 ViewId = Rig.AddViewWithDocument(Probe, TEXT("vacuus_jsdom_scroll_offset"), GDocument);
+
+	bool bBound = false;
+	Rig.RunOnUI([&bBound, Probe, ViewId]()
+		{
+			Rml::ElementDocument* Document = Probe->GetDocument();
+			bBound = Document != nullptr;
+			FWrappedDomHost::Inner->BindDocumentForTest(ViewId, Document);
+		});
+	if (!TestTrue(TEXT("the document loaded and bound"), bBound))
+	{
+		return false;
+	}
+
+	const auto ReadOffset = [&Rig, Probe](const char* Id, bool bLeft) -> float
+	{
+		float Offset = -1.0f;
+		Rig.RunOnUI([&Offset, Probe, Id, bLeft]()
+			{
+				Rml::Element* Element = Probe->GetDocument()->GetElementById(Id);
+				Offset = Element == nullptr ? -1.0f : (bLeft ? Element->GetScrollLeft() : Element->GetScrollTop());
+			});
+		return Offset;
+	};
+	const auto ReadTop = [&ReadOffset]() { return ReadOffset("box", false); };
+
+	// A box that cannot scroll clamps every write to 0, so every assertion below would pass
+	// for the wrong reason without a real layout.
+	float ScrollHeight = 0.0f;
+	float ScrollWidth = 0.0f;
+	Rig.RunOnUI([&ScrollHeight, &ScrollWidth, Probe]()
+		{
+			Rml::ElementDocument* Document = Probe->GetDocument();
+			Rml::Element* Box = Document->GetElementById("box");
+			Rml::Element* HBox = Document->GetElementById("hbox");
+			ScrollHeight = Box != nullptr ? Box->GetScrollHeight() : 0.0f;
+			ScrollWidth = HBox != nullptr ? HBox->GetScrollWidth() : 0.0f;
+		});
+	if (!TestEqual(TEXT("the box really is a scroll container (300 of content in 100)"), ScrollHeight, 300.0f)
+		|| !TestEqual(TEXT("so is the horizontal one"), ScrollWidth, 300.0f))
+	{
+		return false;
+	}
+
+	Rig.Eval(ViewId,
+		"globalThis.box = document.getElementById('box');"
+		"globalThis.hbox = document.getElementById('hbox');"
+		"globalThis.flat = document.getElementById('flat');"
+		"'ok'");
+
+	TestEqual(TEXT("scrollTop reads 0 before anything scrolled"), Rig.Eval(ViewId, "String(box.scrollTop)"),
+		FString(TEXT("0")));
+
+	Rig.Eval(ViewId, "box.scrollTop = 120");
+	TestEqual(TEXT("a write in range lands on the element"), ReadTop(), 120.0f);
+	TestEqual(TEXT("and reads back through the getter"), Rig.Eval(ViewId, "String(box.scrollTop)"),
+		FString(TEXT("120")));
+
+	Rig.Eval(ViewId, "box.scrollTop = 1000");
+	TestEqual(TEXT("a write past the end clamps to the maximum offset"), ReadTop(), 200.0f);
+
+	Rig.Eval(ViewId, "box.scrollTop = -50");
+	TestEqual(TEXT("a negative write clamps to 0"), ReadTop(), 0.0f);
+
+	Rig.Eval(ViewId, "box.scrollTop = 33.6");
+	TestEqual(TEXT("offsets are whole pixels (Element.cpp:1020 rounds)"), ReadTop(), 34.0f);
+
+	Rig.Eval(ViewId, "box.scrollTop = '75'");
+	TestEqual(TEXT("a string coerces like any DOM number"), ReadTop(), 75.0f);
+
+	Rig.Eval(ViewId, "box.scrollTop = 1e300");
+	TestEqual(TEXT("a finite value beyond float's range clamps instead of overflowing"), ReadTop(), 200.0f);
+
+	// NON-FINITE WRITES 0, which is only observable from a non-zero offset: from 0, "ignored"
+	// and "written as 0" look the same. Unguarded, NaN would pass RmlUi's clamp and land in the
+	// offset, and Infinity would saturate at 200 instead of writing 0.
+	Rig.Eval(ViewId, "box.scrollTop = 100; box.scrollTop = NaN");
+	TestEqual(TEXT("NaN writes 0"), ReadTop(), 0.0f);
+	Rig.Eval(ViewId, "box.scrollTop = 100; box.scrollTop = Infinity");
+	TestEqual(TEXT("Infinity writes 0"), ReadTop(), 0.0f);
+	Rig.Eval(ViewId, "box.scrollTop = 100; box.scrollTop = -Infinity");
+	TestEqual(TEXT("-Infinity writes 0"), ReadTop(), 0.0f);
+
+	// THE HORIZONTAL AXIS, on the box that has one. #box declares only overflow-y, so it
+	// could not tell scrollLeft wired to the vertical offset from scrollLeft wired correctly.
+	Rig.Eval(ViewId, "hbox.scrollLeft = 70");
+	TestEqual(TEXT("scrollLeft lands on the horizontal offset"), ReadOffset("hbox", true), 70.0f);
+	TestEqual(TEXT("and leaves the vertical one alone"), ReadOffset("hbox", false), 0.0f);
+	TestEqual(TEXT("scrollLeft reads back"), Rig.Eval(ViewId, "String(hbox.scrollLeft)"), FString(TEXT("70")));
+	Rig.Eval(ViewId, "hbox.scrollLeft = 1000");
+	TestEqual(TEXT("scrollLeft clamps like scrollTop"), ReadOffset("hbox", true), 200.0f);
+
+	Rig.Eval(ViewId, "flat.scrollTop = 40");
+	TestEqual(TEXT("an element without overflow stays at 0"), ReadOffset("flat", false), 0.0f);
+
+	// `scroll` is dispatched INSIDE the assignment (Element.cpp:1027) -- earlier than a browser,
+	// which queues it for the next frame -- and only when the offset actually moved.
+	TestEqual(TEXT("a write that moves the offset dispatches scroll synchronously, a write that does not, does not"),
+		Rig.Eval(ViewId,
+			"(() => { box.scrollTop = 0;"
+			"let seen = [];"
+			"const onScroll = () => { seen.push(box.scrollTop); };"
+			"box.addEventListener('scroll', onScroll);"
+			"box.scrollTop = 10;"
+			"const during = seen.join(',');"
+			"box.scrollTop = 10;"
+			"box.removeEventListener('scroll', onScroll);"
+			"return [during, seen.length].join('|'); })()"),
+		FString(TEXT("10|1")));
+
+	// A valueOf that throws is the script's throw: it propagates, and nothing moves.
+	Rig.Eval(ViewId, "box.scrollTop = 50");
+	const FString Thrown = Rig.Eval(ViewId, "box.scrollTop = { valueOf() { throw new Error('nope'); } }");
+	TestTrue(TEXT("a throwing valueOf propagates"), Thrown.Contains(TEXT("nope")));
+	TestEqual(TEXT("and nothing scrolled on the way out"), ReadTop(), 50.0f);
+
+	// A valueOf that destroys the receiver. The element is resolved again after the conversion
+	// (GetLiveElement's contract). This case pins no-throw only: the pooled slot the victim frees
+	// goes to a replacement that has never been laid out, so a write through the stale pointer
+	// would clamp to 0 there and look exactly like no write at all.
+	TestEqual(TEXT("an element removed by its own valueOf is a no-op, not a use-after-free"),
+		Rig.Eval(ViewId,
+			"(() => { const victim = document.createElement('div');"
+			"box.appendChild(victim);"
+			"victim.scrollTop = { valueOf() { victim.remove(); return 40; } };"
+			"return String(victim.scrollTop); })()"),
+		FString(TEXT("null")));
+
+	// A dead handle: the getter reads null, the setter no-ops, and neither throws.
+	TestEqual(TEXT("a dead handle reads null and ignores writes"),
+		Rig.Eval(ViewId,
+			"(() => { const doomed = document.createElement('div');"
+			"box.appendChild(doomed);"
+			"doomed.remove();"
+			"doomed.scrollTop = 5; doomed.scrollLeft = 5;"
+			"return [doomed.scrollTop, doomed.scrollLeft].map(String).join('|'); })()"),
+		FString(TEXT("null|null")));
+	TestEqual(TEXT("and the live box never moved for it"), ReadTop(), 50.0f);
 
 	TestEqual(TEXT("no JS error anywhere in the run"), FWrappedDomHost::Inner->GetRuntime()->GetNumErrors(), uint64(0));
 	return true;

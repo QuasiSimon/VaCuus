@@ -426,6 +426,10 @@ private:
 	//~ than a family of methods.
 	static JSValue ScrollIntoViewThunk(JSContext* Ctx, JSValueConst This, int Argc, JSValueConst* Argv);
 
+	//~ scrollTop / scrollLeft: one getter/setter pair, magic-dispatched on the axis.
+	static JSValue ScrollOffsetGetterThunk(JSContext* Ctx, JSValueConst This, int Magic);
+	static JSValue ScrollOffsetSetterThunk(JSContext* Ctx, JSValueConst This, JSValueConst Value, int Magic);
+
 	//~ Element prototype: queries and attributes (magic-dispatched families).
 	static JSValue QueryThunk(JSContext* Ctx, JSValueConst This, int Argc, JSValueConst* Argv, int Magic);
 	static JSValue AttributeThunk(JSContext* Ctx, JSValueConst This, int Argc, JSValueConst* Argv, int Magic);

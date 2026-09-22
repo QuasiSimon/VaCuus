@@ -103,6 +103,12 @@ enum EChildList : int32
 	ChildListNodes			  // `childNodes`: #text included
 };
 
+enum EScrollAxis : int32
+{
+	ScrollAxisTop = 0,	  // `scrollTop`: Element::Get/SetScrollTop
+	ScrollAxisLeft		  // `scrollLeft`: Element::Get/SetScrollLeft
+};
+
 /** DOM nodeType values (the only three this facade can produce). */
 enum ENodeType : int32
 {
@@ -507,6 +513,10 @@ void FVaCuusJsViewContext::InstallDomPrototypes()
 		JS_CFUNC_DEF("removeChild", 1, FVaCuusJsViewContext::RemoveChildThunk),
 		JS_CFUNC_DEF("remove", 0, FVaCuusJsViewContext::RemoveThunk),
 		JS_CFUNC_DEF("scrollIntoView", 0, FVaCuusJsViewContext::ScrollIntoViewThunk),
+		JS_CGETSET_MAGIC_DEF("scrollTop", FVaCuusJsViewContext::ScrollOffsetGetterThunk,
+			FVaCuusJsViewContext::ScrollOffsetSetterThunk, ScrollAxisTop),
+		JS_CGETSET_MAGIC_DEF("scrollLeft", FVaCuusJsViewContext::ScrollOffsetGetterThunk,
+			FVaCuusJsViewContext::ScrollOffsetSetterThunk, ScrollAxisLeft),
 		JS_CFUNC_MAGIC_DEF("querySelector", 1, FVaCuusJsViewContext::QueryThunk, QuerySelector),
 		JS_CFUNC_MAGIC_DEF("querySelectorAll", 1, FVaCuusJsViewContext::QueryThunk, QuerySelectorAll),
 		JS_CFUNC_MAGIC_DEF("closest", 1, FVaCuusJsViewContext::QueryThunk, Closest),
@@ -998,6 +1008,81 @@ JSValue FVaCuusJsViewContext::ScrollIntoViewThunk(JSContext* Ctx, JSValueConst T
 	// ScrollParentage stays at its All default: the DOM scrolls every ancestor
 	// scroll container, not only the closest one.
 	Element->ScrollIntoView(Options);
+	return JS_UNDEFINED;
+}
+
+JSValue FVaCuusJsViewContext::ScrollOffsetGetterThunk(JSContext* Ctx, JSValueConst This, int Magic)
+{
+	using namespace VaCuusJsDomInternal;
+
+	FVaCuusJsViewContext* Self = GetSelfOrNull(Ctx);
+	if (Self == nullptr)
+	{
+		return JS_NULL;	   // dead context: same shape as a dead handle
+	}
+
+	Rml::Element* Element = Self->GetLiveElement(This);
+	if (Element == nullptr)
+	{
+		return JS_NULL;	   // dead: null, the house rule (nodeType reads the same way)
+	}
+
+	return JS_NewFloat64(Ctx, Magic == ScrollAxisLeft ? Element->GetScrollLeft() : Element->GetScrollTop());
+}
+
+JSValue FVaCuusJsViewContext::ScrollOffsetSetterThunk(JSContext* Ctx, JSValueConst This, JSValueConst Value, int Magic)
+{
+	using namespace VaCuusJsDomInternal;
+
+	FVaCuusJsViewContext* Self = GetSelfOrNull(Ctx);
+	if (Self == nullptr)
+	{
+		return JS_UNDEFINED;	// dead context: assignment silently no-ops, like a dead handle
+	}
+
+	if (Self->GetLiveElement(This) == nullptr)
+	{
+		return JS_UNDEFINED;	// dead: assignment silently no-ops, never throws
+	}
+
+	// A valueOf that throws is the SCRIPT's throw, not a facade throw, so it propagates -- the
+	// same carve-out ToRmlString documents.
+	double Offset = 0.0;
+	if (JS_ToFloat64(Ctx, &Offset, Value) < 0)
+	{
+		return JS_EXCEPTION;
+	}
+
+	// NaN AND BOTH INFINITIES WRITE 0, the CSSOM's "normalize non-finite values" for scrollTop and
+	// scrollLeft. RmlUi does not guard it: its clamp is two comparisons (Math.h:38-41), both false
+	// for NaN, so a NaN would reach scroll_offset itself (Element.cpp:1020-1023) and every absolute
+	// offset under the element with it. The finite range is narrowed to float's before the cast,
+	// because a double outside it converts to float with undefined behaviour ([conv.double]).
+	const double FloatMax = TNumericLimits<float>::Max();
+	const float Clamped = FMath::IsFinite(Offset) ? static_cast<float>(FMath::Clamp(Offset, -FloatMax, FloatMax)) : 0.0f;
+
+	// RE-ACQUIRED: JS_ToFloat64 runs an object's valueOf, and script reached that way can destroy
+	// this element -- see GetLiveElement.
+	Rml::Element* Element = Self->GetLiveElement(This);
+	if (Element == nullptr)
+	{
+		return JS_UNDEFINED;
+	}
+
+	// RmlUi rounds the offset and clamps it to [0, scroll size - client size] of the element's
+	// CURRENT layout (Element.cpp:1000-1011, :1018-1029). Nothing lays the element out first the way
+	// a browser flushes layout before a scroll, so a write in the same frame as a content change is
+	// clamped against the old content. 0 is exact either way: the upper bound is never below it,
+	// since the scroll size is at least the client size (Element.cpp:1031-1039). A write that
+	// moves the offset dispatches `scroll` synchronously, inside this assignment (:1009, :1027).
+	if (Magic == ScrollAxisLeft)
+	{
+		Element->SetScrollLeft(Clamped);
+	}
+	else
+	{
+		Element->SetScrollTop(Clamped);
+	}
 	return JS_UNDEFINED;
 }
 

@@ -100,6 +100,22 @@ interface VaCuusElement {
 	 * `behavior: "instant"` for browser parity.
 	 */
 	scrollIntoView(options?: boolean | VaCuusScrollIntoViewOptions): void;
+	/**
+	 * The vertical scroll offset in px. A write rounds to a whole pixel and
+	 * clamps to [0, scroll height - client height]; NaN and ±Infinity write 0,
+	 * the CSSOM rule. Reads null on a dead handle.
+	 * Deviations from DOM, all three RmlUi's own behaviour:
+	 * - the clamp uses the CURRENT layout. Nothing is laid out first the way a
+	 *   browser flushes layout, so a write in the same frame as a content change
+	 *   clamps against the old content. Writing 0 is always exact;
+	 * - `scroll` is dispatched synchronously, inside the assignment, and only
+	 *   when the offset moved -- not on the next frame;
+	 * - a write does not cancel a smooth scroll already running on the element:
+	 *   RmlUi goes on adding the rest of its distance to the new offset.
+	 */
+	scrollTop: number;
+	/** The horizontal scroll offset in px; scrollTop's rules, on the other axis. */
+	scrollLeft: number;
 	/** DOM duplicate rule; options object honored for `capture` only. Non-function listener throws TypeError. */
 	addEventListener(type: string, listener: (ev: VaCuusEvent) => void, options?: boolean | { capture?: boolean }): void;
 	removeEventListener(type: string, listener: (ev: VaCuusEvent) => void, options?: boolean | { capture?: boolean }): void;
